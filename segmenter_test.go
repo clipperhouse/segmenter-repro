@@ -1,131 +1,93 @@
 package segmenter_test
 
 import (
-	"bufio"
 	"bytes"
 	"io/ioutil"
+	"reflect"
 	"testing"
 
 	"github.com/blevesearch/segment"
 	"github.com/clipperhouse/uax29/words"
 )
 
-func TestLong(t *testing.T) {
-	b, err := ioutil.ReadFile("wikinyc-long.txt")
+func TestBleveUax29(t *testing.T) {
+	file, err := ioutil.ReadFile("sample.txt")
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 
-	r := bytes.NewReader(b)
-	segmenter := segment.NewSegmenter(r)
-
-	segmentcount := 0
-	for segmenter.Segment() {
-		segmentcount++
-	}
-
-	if err := segmenter.Err(); err != nil {
-		t.Error(err)
-	}
-
-	t.Logf("saw %d segments\n", segmentcount)
-}
-
-func TestCompare(t *testing.T) {
-	file, _ := ioutil.ReadFile("wikinyc-short.txt")
-
-	r := bytes.NewReader(file)
-	sc := words.NewScanner(r)
-
-	r2 := bytes.NewReader(file)
-	segmenter := segment.NewSegmenter(r2)
-
-	for {
-		if !sc.Scan() {
-			break
-		}
-		if !segmenter.Segment() {
-			break
+	allSpace := func(token []byte) bool {
+		for _, r := range string(token) {
+			if r != ' ' {
+				return false
+			}
 		}
 
-		if sc.Text() != segmenter.Text() {
-			t.Fatalf("segmenter: %q, uax29: %q", segmenter.Text(), sc.Text())
+		return true
+	}
+
+	// Differences I found:
+	// - Bleve splits a run of spaces into separate tokens,
+	//   while uax29 returns a single token of multiple spaces
+	// - Bleve appears to be Unicode 8.0.0, uax29 is 13.0.0,
+	//   seems like a difference on emoji skin tone modifiers
+
+	uax29 := words.NewSegmenter(file)
+	var uax29Result [][]byte
+	for uax29.Next() {
+		token := uax29.Bytes()
+		if allSpace(token) {
+			// disregard space, see comment above
+			continue
 		}
+		uax29Result = append(uax29Result, token)
 	}
-}
-
-func TestShort(t *testing.T) {
-	b, err := ioutil.ReadFile("wikinyc-short.txt")
-	if err != nil {
-		t.Error(err)
+	if uax29.Err() != nil {
+		t.Fatal(uax29.Err())
 	}
+	t.Logf("uax29 segmented %d tokens", len(uax29Result))
 
-	r := bytes.NewReader(b)
-	segmenter := segment.NewSegmenter(r)
-
-	segmentcount := 0
-	for segmenter.Segment() {
-		segmentcount++
-	}
-
-	if err := segmenter.Err(); err != nil {
-		t.Error(err)
-	}
-
-	t.Logf("saw %d segments\n", segmentcount)
-}
-
-func BenchmarkUAX29(b *testing.B) {
-	file, err := ioutil.ReadFile("wikinyc-short.txt")
-
-	if err != nil {
-		b.Error(err)
-	}
-
-	b.ResetTimer()
-
-	count := 0
-	for i := 0; i < b.N; i++ {
-		r := bytes.NewReader(file)
-		sc := words.NewScanner(r)
-
-		c := 0
-		for sc.Scan() {
-			c++
+	bleve := segment.NewSegmenterDirect(file)
+	var bleveResult [][]byte
+	for bleve.Segment() {
+		token := bleve.Bytes()
+		if allSpace(token) {
+			// disregard space, see comment above
+			continue
 		}
-		if err := sc.Err(); err != nil {
-			b.Error(err)
-		}
-
-		count = c
+		bleveResult = append(bleveResult, token)
 	}
-	b.Logf("%d tokens\n", count)
-}
-
-func BenchmarkSegment(b *testing.B) {
-	file, err := ioutil.ReadFile("wikinyc-short.txt")
-
-	if err != nil {
-		b.Error(err)
+	if bleve.Err() != nil {
+		t.Fatal(bleve.Err())
 	}
+	t.Logf("bleve segmented %d tokens", len(bleveResult))
 
-	b.ResetTimer()
-
-	count := 0
-	for i := 0; i < b.N; i++ {
-		r := bytes.NewReader(file)
-		sc := bufio.NewScanner(r)
-		sc.Split(segment.SplitWords)
-
-		c := 0
-		for sc.Scan() {
-			c++
+	if !reflect.DeepEqual(uax29Result, bleveResult) {
+		// ok let's go spelunking
+		var longer int
+		if len(bleveResult) > len(uax29Result) {
+			longer = len(bleveResult)
 		}
-		if err := sc.Err(); err != nil {
-			b.Error(err)
+		if len(bleveResult) < len(uax29Result) {
+			longer = len(uax29Result)
 		}
 
-		count = c
+		if longer > 0 {
+			for i := 0; i < longer; i++ {
+				if !bytes.Equal(bleveResult[i], uax29Result[i]) {
+					t.Logf("bleve at index %d: %s %v\n", i, bleveResult[i], bleveResult[i])
+					t.Logf("uax at index %d: %s %v\n", i, uax29Result[i], uax29Result[i])
+
+					t.Logf("bleve at index %d: %s %v\n", i+1, bleveResult[i+1], bleveResult[i+1])
+					t.Logf("uax at index %d: %s %v\n", i+1, uax29Result[i+1], uax29Result[i+1])
+
+					t.Fatal("see differences above. maybe emoji modifier, unicode version?")
+				}
+			}
+		}
+
+		t.Fatal("nope")
 	}
-	b.Logf("%d tokens\n", count)
+
+	t.Log("confirmed identical results, modulo spaces")
 }

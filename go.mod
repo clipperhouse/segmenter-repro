@@ -1,8 +1,8 @@
 module github.com/clipperhouse/segmenter-repro
 
-go 1.14
+go 1.16
 
 require (
 	github.com/blevesearch/segment v0.9.0
-	github.com/clipperhouse/uax29 v1.6.3
+	github.com/clipperhouse/uax29 v1.12.0
 )
